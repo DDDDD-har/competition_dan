@@ -4,13 +4,9 @@ from __future__ import annotations
 import argparse
 import datetime
 import os
-import signal
-import subprocess
 import sys
 import time
 import traceback
-from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
@@ -124,12 +120,7 @@ def _safe_pos(pos: np.ndarray, fallback: np.ndarray | None) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 class EEFDevice(AbstractDevice):
-    """将策略输出的 18 维 action 转发给 OSC；按钮任务默认锁定左臂。
-
-    采集全程 l_hold=True，左臂几乎不动。策略左臂常输出全零四元数，
-    直接送给 OSC 会触发 `Found zero norm quaternions`。与工具推理一致：
-    左臂锁在初始化位姿，只执行右臂与夹爪。
-    """
+    """将策略输出的 18 维 action 原样转发给 OSC 双臂与夹爪。与官方推理脚本一致，不锁左臂。"""
 
     def __init__(
         self,
@@ -143,32 +134,17 @@ class EEFDevice(AbstractDevice):
         r_quat_b=None,
         l_grip_ctrl=None,
         r_grip_ctrl=None,
-        lock_left_arm: bool = True,
     ):
         self.l_arm = l_arm
         self.r_arm = r_arm
         self.l_grip = l_grip
         self.r_grip = r_grip
-        self.lock_left_arm = bool(lock_left_arm)
         self.l_pos_b = None if l_pos_b is None else np.asarray(l_pos_b, dtype=np.float32)
         self.l_quat_b = None if l_quat_b is None else np.asarray(l_quat_b, dtype=np.float32)
         self.r_pos_b = None if r_pos_b is None else np.asarray(r_pos_b, dtype=np.float32)
         self.r_quat_b = None if r_quat_b is None else np.asarray(r_quat_b, dtype=np.float32)
         self.l_grip_ctrl = None if l_grip_ctrl is None else np.asarray(l_grip_ctrl, dtype=np.float32).reshape(2)
         self.r_grip_ctrl = None if r_grip_ctrl is None else np.asarray(r_grip_ctrl, dtype=np.float32).reshape(2)
-        self._l_hold_pos = None
-        self._l_hold_quat = None
-        self._l_hold_grip = None
-
-    def set_left_hold(self, l_pos_b, l_quat_b, l_grip_ctrl=None):
-        self._l_hold_pos = np.asarray(l_pos_b, dtype=np.float32).copy()
-        self._l_hold_quat = _safe_quat(l_quat_b, np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32))
-        if l_grip_ctrl is not None:
-            self._l_hold_grip = np.asarray(l_grip_ctrl, dtype=np.float32).reshape(2).copy()
-        self.l_pos_b = self._l_hold_pos.copy()
-        self.l_quat_b = self._l_hold_quat.copy()
-        if self._l_hold_grip is not None:
-            self.l_grip_ctrl = self._l_hold_grip.copy()
 
     def set_target(
         self,
@@ -179,38 +155,26 @@ class EEFDevice(AbstractDevice):
         l_grip_ctrl=None,
         r_grip_ctrl=None,
     ):
-        if self.lock_left_arm:
-            if self._l_hold_pos is not None:
-                self.l_pos_b = self._l_hold_pos.copy()
-                self.l_quat_b = self._l_hold_quat.copy()
-            if self._l_hold_grip is not None:
-                self.l_grip_ctrl = self._l_hold_grip.copy()
-        else:
-            if l_pos_b is not None:
-                self.l_pos_b = np.asarray(l_pos_b, dtype=np.float32)
-            if l_quat_b is not None:
-                self.l_quat_b = np.asarray(l_quat_b, dtype=np.float32)
-            if l_grip_ctrl is not None:
-                self.l_grip_ctrl = np.asarray(l_grip_ctrl, dtype=np.float32).reshape(2)
+        if l_pos_b is not None:
+            self.l_pos_b = np.asarray(l_pos_b, dtype=np.float32)
+        if l_quat_b is not None:
+            self.l_quat_b = np.asarray(l_quat_b, dtype=np.float32)
         if r_pos_b is not None:
             self.r_pos_b = np.asarray(r_pos_b, dtype=np.float32)
         if r_quat_b is not None:
             self.r_quat_b = np.asarray(r_quat_b, dtype=np.float32)
+        if l_grip_ctrl is not None:
+            self.l_grip_ctrl = np.asarray(l_grip_ctrl, dtype=np.float32).reshape(2)
         if r_grip_ctrl is not None:
             self.r_grip_ctrl = np.asarray(r_grip_ctrl, dtype=np.float32).reshape(2)
 
     def update(self):
-        if self.lock_left_arm and self._l_hold_pos is not None:
-            self.l_pos_b = self._l_hold_pos.copy()
-            self.l_quat_b = self._l_hold_quat.copy()
-            if self._l_hold_grip is not None:
-                self.l_grip_ctrl = self._l_hold_grip.copy()
         if self.l_arm is not None and self.l_pos_b is not None and self.l_quat_b is not None:
             self.l_arm.update_action_position(self.l_pos_b)
-            self.l_arm.update_action_axisangle(_safe_quat(self.l_quat_b, self._l_hold_quat))
+            self.l_arm.update_action_axisangle(self.l_quat_b)
         if self.r_arm is not None and self.r_pos_b is not None and self.r_quat_b is not None:
             self.r_arm.update_action_position(self.r_pos_b)
-            self.r_arm.update_action_axisangle(_safe_quat(self.r_quat_b, None))
+            self.r_arm.update_action_axisangle(self.r_quat_b)
         if self.l_grip is not None and self.l_grip_ctrl is not None:
             self.l_grip.update_ctrl(self.l_grip_ctrl)
         if self.r_grip is not None and self.r_grip_ctrl is not None:
@@ -419,198 +383,7 @@ _PROMPT_BUTTON_JOINTS = {
     "黄": "Group_Static_ElectricalCabinet_Button04_joint",
 }
 PRESS_DISP_MIN = 0.0005
-TOUCH_BTN_Q_MIN = 0.001  # 按钮关节位移 ≥1mm 视为碰到按钮
-TARGET_PROMPTS = {
-    "red": "按红色按钮",
-    "green": "按绿色按钮",
-    "blue": "按蓝色按钮",
-    "yellow": "按黄色按钮",
-}
-
-
-def _apply_local_only_scoring_env() -> None:
-    """本机评分：连本地 9000，不向中央服务器上报结果/视频。"""
-    os.environ["ORCA_SCORING_SERVER_URL"] = ""
-    os.environ["ORCA_SCORING_VIDEO_ENABLED"] = "0"
-    os.environ["ORCA_SCORING_USE_SCREEN_CAPTURE"] = "false"
-    os.environ["ORCA_SCORING_KEEP_WINDOW_ON_TOP"] = "false"
-
-
-def _scorer_cmdline_has_remote_server(cmdline: str) -> bool:
-    parts = cmdline.split()
-    if "--server-url" not in parts:
-        return False
-    idx = parts.index("--server-url")
-    if idx + 1 >= len(parts):
-        return False
-    url = parts[idx + 1].strip()
-    return bool(url) and not url.startswith("--")
-
-
-def _iter_scorer_lines() -> list[str]:
-    try:
-        out = subprocess.check_output(
-            ["pgrep", "-af", "scorer_service.main"],
-            text=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return []
-    return [line for line in out.splitlines() if "scorer_service.main" in line]
-
-
-def _stop_leftover_scorers(*, want_remote: bool | None, reason: str) -> None:
-    """停掉残留的本地评分服务。want_remote=True 只杀上报进程，False 只杀本机，None 全杀。"""
-    killed = False
-    for line in _iter_scorer_lines():
-        has_remote = _scorer_cmdline_has_remote_server(line)
-        if want_remote is True and not has_remote:
-            continue
-        if want_remote is False and has_remote:
-            continue
-        pid_s = line.split(None, 1)[0]
-        try:
-            pid = int(pid_s)
-        except ValueError:
-            continue
-        orca_logger.warning(f"[scorer] {reason} pid={pid}")
-        try:
-            os.kill(pid, signal.SIGTERM)
-            killed = True
-        except ProcessLookupError:
-            continue
-    if not killed:
-        return
-    deadline = time.time() + 8.0
-    while time.time() < deadline:
-        still = _iter_scorer_lines()
-        leftover = []
-        for line in still:
-            has_remote = _scorer_cmdline_has_remote_server(line)
-            if want_remote is True and not has_remote:
-                continue
-            if want_remote is False and has_remote:
-                continue
-            leftover.append(line)
-        if not leftover:
-            return
-        time.sleep(0.2)
-    orca_logger.warning("[scorer] 残留评分服务未在 8s 内退出")
-
-
-def _stop_leftover_upload_scorer() -> None:
-    """local-only 时不可复用带中央 server-url 的 :9000 进程。"""
-    _stop_leftover_scorers(
-        want_remote=True,
-        reason="发现已在运行的上报模式评分服务，local-only 将先停止它",
-    )
-
-
-def _start_official_scorer(args: argparse.Namespace) -> tuple[Any, dict]:
-    from orca_scorer_client import ScorerClient
-
-    if args.local_only:
-        _apply_local_only_scoring_env()
-        _stop_leftover_upload_scorer()
-    else:
-        _stop_leftover_scorers(
-            want_remote=False,
-            reason="发现本机评分服务（无中央 server-url），上报将先停止它以免复用",
-        )
-    kwargs: dict[str, Any] = {
-        "robot_id": args.robot_id,
-        "timeout": 60.0,
-        "keep_window_on_top": not args.local_only,
-        "server_url": "",
-    }
-    if not args.local_only:
-        kwargs.pop("server_url")
-    if args.team_id:
-        kwargs["team_id"] = args.team_id
-    if args.team_token:
-        kwargs["team_token"] = args.team_token
-    scorer = ScorerClient(**kwargs)
-    targets = args.targets
-    info = scorer.start_attempt(args.task_id, targets=targets, prompt=args.prompt)
-    orca_logger.info(f"[scorer] start_attempt: {info}")
-    if isinstance(info, dict) and info.get("error"):
-        raise RuntimeError(f"ScorerClient.start_attempt failed: {info['error']}")
-    return scorer, info
-
-
-def _finish_official_scorer(scorer: Any, local_only: bool) -> dict:
-    summary = scorer.finish()
-    orca_logger.info(
-        f"[scorer] score={summary.get('score')}/{summary.get('max_score')}  "
-        f"success_rate={summary.get('success_rate')}"
-    )
-    for step in summary.get("step_results") or []:
-        ok = step.get("success")
-        extra = step.get("extra") or {}
-        orca_logger.info(
-            f"    {step.get('step_id')}: "
-            f"{'PASS' if ok else 'FAIL'}  score={step.get('score')}"
-        )
-        if extra.get("p1_reason"):
-            orca_logger.info(f"      P1: {extra.get('p1_reason')}")
-        if extra.get("p2_reason"):
-            orca_logger.info(f"      P2: {extra.get('p2_reason')}  span={extra.get('p2_span_s')}s")
-        if extra.get("min_distance_to_target") is not None:
-            orca_logger.info(
-                f"      d_target={extra.get('min_distance_to_target')}  "
-                f"d_other={extra.get('min_distance_to_other')}({extra.get('nearest_other_button')})"
-            )
-    if not local_only:
-        _log_central_report_status()
-        time.sleep(90)
-        _log_central_report_status()
-    return summary
-
-
-def _scorer_service_log_path() -> str:
-    return os.path.join(os.getcwd(), ".orca_scorer_client", "scorer_service_9000.log")
-
-
-def _log_central_report_status() -> None:
-    path = _scorer_service_log_path()
-    if not os.path.isfile(path):
-        orca_logger.warning(f"[scorer] 未找到评分服务日志: {path}")
-        return
-    try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        orca_logger.warning(f"[scorer] 无法读取评分服务日志: {e}")
-        return
-    if "已上报汇总" in text:
-        orca_logger.info("[scorer] 中央服务器：已上报汇总")
-    elif "上报服务器失败" in text:
-        err = next(
-            (ln.strip() for ln in text.splitlines() if "上报服务器失败" in ln),
-            "上报服务器失败",
-        )
-        orca_logger.error(f"[scorer] 中央服务器上报失败: {err}")
-    elif "中央服务器: (未配置)" in text:
-        orca_logger.error("[scorer] 评分服务未配置中央服务器，结果不会上传")
-    else:
-        orca_logger.warning("[scorer] 评分服务日志里还没有「已上报汇总」，上报可能仍在进行或已失败")
-
-PROFILE_PRESETS: dict[str, dict] = {
-    # scripted 采集：560 控制步单段轨迹；首按约 500 步内完成。
-    "scripted": {
-        "max_steps": 800,
-        "exec_horizon": 50,
-        "action_repeat": 10,
-        "early_stop_on_touch": True,
-        "early_stop_hold_steps": 40,
-        "touch_btn_q_min": TOUCH_BTN_Q_MIN,
-    },
-    # button_press 采集：158 帧 @20Hz，整轨迹约 1580 控制步。
-    "button_press": {
-        "max_steps": 1800,
-        "exec_horizon": 25,
-        "action_repeat": 10,
-        "early_stop_on_touch": False,
-    },
-}
+TOUCH_BTN_Q_MIN = 0.001  # 仅用于日志：按钮关节位移 ≥1mm 记为碰到
 
 
 def _button_site_for_prompt(prompt: str) -> str | None:
@@ -728,26 +501,12 @@ def main():
     parser.add_argument("--prompt", type=str, default="按红色按钮",
                         help="任务语言描述（必须与训练时一致）")
     parser.add_argument("--sleep", action="store_true", help="按 real_time_step 节奏运行")
-    parser.add_argument(
-        "--profile",
-        type=str,
-        choices=["default", "scripted", "button_press"],
-        default="default",
-        help="推理预设：scripted=短轨迹+触碰早停；button_press=长轨迹半块重规划",
-    )
-    parser.add_argument("--max_steps", type=int, default=1800, help="每集最大控制步数")
+    parser.add_argument("--max_steps", type=int, default=500, help="每集最大控制步数")
     parser.add_argument(
         "--action_repeat",
         type=int,
-        default=10,
-        help="每个推理 action 重复执行的控制步数。采集 20fps、frame_skip=5（5ms）时 10 步=50ms",
-    )
-    parser.add_argument(
-        "--exec_horizon",
-        type=int,
-        default=25,
-        help="每次推理实际执行的动作数（模型 action_horizon=50）。取 25 即半块重规划，"
-             "每 1.25s 用新观测纠偏；取 50 为整块开环",
+        default=1,
+        help="每个推理 action 重复执行的控制步数",
     )
     parser.add_argument("--episodes", type=int, default=1, help="评估集数")
     parser.add_argument("--camera_warmup_steps", type=int, default=10,
@@ -773,86 +532,17 @@ def main():
         action="store_true",
         help="使用按钮三路（默认已启用）：camera_head_color:7090 / camera_left_color:7080 / camera_right_color:7070",
     )
-    parser.add_argument(
-        "--no_lock_left_arm",
-        action="store_true",
-        help="不锁定左臂（默认锁定，与采集 l_hold 和工具推理一致）",
-    )
-    parser.add_argument(
-        "--touch_btn_q_min",
-        type=float,
-        default=TOUCH_BTN_Q_MIN,
-        help="碰到按钮阈值：max_btn_q 或 max_btn_disp ≥ 此值即成功（米）",
-    )
-    parser.add_argument(
-        "--early_stop_on_touch",
-        action="store_true",
-        help="碰到按钮后保压若干步再结束本集（避免重复按压）",
-    )
-    parser.add_argument(
-        "--early_stop_hold_steps",
-        type=int,
-        default=40,
-        help="early_stop_on_touch 时，触碰后额外执行的控制步数（默认 40，对齐 scripted 保压段）",
-    )
-    parser.add_argument("--team-id", dest="team_id", default=None, help="评分队伍 ID（可省略，读 ~/.config/orca_scoring）")
-    parser.add_argument("--team-token", dest="team_token", default=None, help="评分队伍 token")
-    parser.add_argument("--robot-id", dest="robot_id", default="g1_omnipicker")
-    parser.add_argument(
-        "--task-id",
-        dest="task_id",
-        default=None,
-        help="评分任务 ID。与 --targets 一起传入时启用 ScorerClient（PDF 7.3: task2_button_press）",
-    )
-    parser.add_argument(
-        "--targets",
-        nargs="+",
-        choices=["red", "green", "blue", "yellow"],
-        default=None,
-        help="任务二评分颜色。PDF 7.3: red green blue yellow。每轮按该顺序各按一次；--episodes 为轮数，每轮单独评分",
-    )
-    parser.add_argument(
-        "--local-only",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="本机评分、不上传中央服务器（默认开）。上报需 ORCA_SCORING_ALLOW_UPLOAD=1 且 --no-local-only",
-    )
     args = parser.parse_args()
-    if args.targets and args.task_id is None:
-        args.task_id = "task2_button_press"
-    args.enable_scorer = args.task_id is not None or args.targets is not None
-    if args.enable_scorer and args.task_id is None:
-        args.task_id = "task2_button_press"
-    if args.enable_scorer and not args.local_only:
-        if os.environ.get("ORCA_SCORING_ALLOW_UPLOAD") != "1":
-            parser.error(
-                "当前只允许本机评分。若要上报中央服务器，请设置 "
-                "ORCA_SCORING_ALLOW_UPLOAD=1 并加上 --no-local-only"
-            )
-
-    if args.profile != "default":
-        preset = PROFILE_PRESETS[args.profile]
-        for key, val in preset.items():
-            setattr(args, key, val)
-        orca_logger.info(f"推理 profile={args.profile}: {preset}")
 
     if args.max_steps < 1:
         parser.error("--max_steps must be >= 1")
     if args.action_repeat < 1:
         parser.error("--action_repeat must be >= 1")
-    if args.exec_horizon < 1:
-        parser.error("--exec_horizon must be >= 1")
     if args.episodes < 1:
         parser.error("--episodes must be >= 1")
-    if args.touch_btn_q_min < 0:
-        parser.error("--touch_btn_q_min must be >= 0")
-    if args.early_stop_hold_steps < 1:
-        parser.error("--early_stop_hold_steps must be >= 1")
     orca_logger.info(
-        f"infer: horizon={args.exec_horizon} repeat={args.action_repeat} "
-        f"max_steps={args.max_steps} episodes={args.episodes} "
-        f"early_stop_on_touch={args.early_stop_on_touch} "
-        f"scorer={args.enable_scorer}"
+        f"infer: full_chunk repeat={args.action_repeat} "
+        f"max_steps={args.max_steps} episodes={args.episodes}"
     )
 
     with open(os.path.abspath(os.path.join(base_dir, args.task_config)), "r", encoding="utf-8") as f:
@@ -919,25 +609,13 @@ def main():
 
     _video_started = False
     _head_writers: list[cv2.VideoWriter] = []
-    scorer = None
     try:
         episode_results: list[bool] = []
-        round_summaries: list[dict] = []
-        if args.targets:
-            # 一轮 = 四色各按一次（红→绿→蓝→黄），--episodes 为轮数。
-            jobs = [
-                (color, TARGET_PROMPTS[color], ep)
-                for ep in range(args.episodes)
-                for color in args.targets
-            ]
-        else:
-            jobs = [(None, args.prompt, ep) for ep in range(args.episodes)]
-        n_colors = len(args.targets) if args.targets else 1
+        jobs = [(args.prompt, ep) for ep in range(args.episodes)]
 
-        for job_index, (color, current_prompt, episode_index) in enumerate(jobs):
-            color_tag = f" {color}" if color else ""
+        for job_index, (current_prompt, episode_index) in enumerate(jobs):
             orca_logger.info(
-                f"=== Round {episode_index + 1}/{args.episodes}{color_tag} "
+                f"=== Episode {episode_index + 1}/{args.episodes} "
                 f"prompt={current_prompt!r} ({job_index + 1}/{len(jobs)}) ==="
             )
 
@@ -973,26 +651,11 @@ def main():
             if device is None:
                 device = EEFDevice(
                     l_arm=l_arm, r_arm=r_arm, l_grip=l_grip, r_grip=r_grip,
-                    lock_left_arm=not args.no_lock_left_arm,
                     **_init_action_apply,
                 )
                 manager.set_device(device)
             else:
                 device.set_target(**_init_action_apply)
-
-            device.set_left_hold(
-                _init_action_apply["l_pos_b"],
-                _init_action_apply["l_quat_b"],
-                _init_action_apply.get("l_grip_ctrl"),
-            )
-            for _ in range(10):
-                action = manager.run_controllers()
-                env.step(action)
-                env.render()
-            orca_logger.info(
-                f"左臂已锁定 hold_pos={np.asarray(device._l_hold_pos).round(4).tolist()} "
-                f"lock={device.lock_left_arm}"
-            )
 
             # 首集：场景就绪后启动相机内存流并连接策略服务器
             if job_index == 0:
@@ -1029,21 +692,6 @@ def main():
                 )
                 orca_logger.info(f"已连接策略服务器: {args.host}:{args.port}")
                 orca_logger.info(f"策略元数据: {policy_runner.metadata}")
-                if args.enable_scorer:
-                    scorer, _scorer_info = _start_official_scorer(args)
-                    orca_logger.info(
-                        f"[scorer] attempt_id={_scorer_info.get('attempt_id')}  "
-                        f"local_only={args.local_only}  "
-                        f"round={episode_index + 1}/{args.episodes}"
-                    )
-
-            if args.enable_scorer and scorer is None and job_index > 0:
-                scorer, _scorer_info = _start_official_scorer(args)
-                orca_logger.info(
-                    f"[scorer] attempt_id={_scorer_info.get('attempt_id')}  "
-                    f"local_only={args.local_only}  "
-                    f"round={episode_index + 1}/{args.episodes}"
-                )
 
             if policy_runner is not None:
                 policy_runner.prompt = current_prompt
@@ -1093,25 +741,18 @@ def main():
             btn_x0 = None
             max_btn_disp = 0.0
             if ee_site and btn_site:
-                orca_logger.info(f"评分 site: ee={ee_site} btn={btn_site} joint={btn_joint}")
+                orca_logger.info(f"按钮观测: ee={ee_site} btn={btn_site} joint={btn_joint}")
             else:
-                orca_logger.warning(f"评分 site 未解析: ee={ee_site} btn_key={btn_site_key}")
+                orca_logger.warning(f"按钮观测未解析: ee={ee_site} btn_key={btn_site_key}")
 
-            episode_done = False
-            touch_hold_steps = 0
-
-            while step < args.max_steps and not truncated and not episode_done:
-                # state 由本体感知构造，与采集数据集 observation.state 一致。
+            while step < args.max_steps and not truncated:
                 state = storage.build_state(storage.obs_callback(env))
                 action_chunk = policy_runner.infer_action_chunk(state)
                 if step == 0:
-                    orca_logger.info(
-                        f"action_chunk_len={len(action_chunk)} exec_horizon={args.exec_horizon} "
-                        f"will_exec={min(len(action_chunk), args.exec_horizon)}"
-                    )
+                    orca_logger.info(f"action_chunk_len={len(action_chunk)} will_exec=all")
 
-                for model_action in action_chunk[: args.exec_horizon]:
-                    if step >= args.max_steps or truncated or episode_done:
+                for model_action in action_chunk:
+                    if step >= args.max_steps or truncated:
                         break
 
                     if step == 0:
@@ -1134,7 +775,7 @@ def main():
                     device.set_target(**action_dict_for_apply(parsed_action))
 
                     for _ in range(args.action_repeat):
-                        if step >= args.max_steps or truncated or episode_done:
+                        if step >= args.max_steps or truncated:
                             break
 
                         start_time = time.time()
@@ -1169,22 +810,6 @@ def main():
                                 if btn_q0 is None:
                                     btn_q0 = _q
                                 max_btn_q = max(max_btn_q, abs(_q - btn_q0))
-
-                        if args.early_stop_on_touch and not episode_done:
-                            touched_now = (
-                                max_btn_q >= args.touch_btn_q_min
-                                or max_btn_disp >= args.touch_btn_q_min
-                            )
-                            if touched_now:
-                                touch_hold_steps += 1
-                                if touch_hold_steps >= args.early_stop_hold_steps:
-                                    episode_done = True
-                                    orca_logger.info(
-                                        f"early stop: touched button "
-                                        f"(max_btn_q={max_btn_q:.5f}, hold={touch_hold_steps})"
-                                    )
-                            else:
-                                touch_hold_steps = 0
 
                         if _write_head_frame(head_writer, _shared_cameras, _head_cam_name):
                             head_frames += 1
@@ -1260,55 +885,27 @@ def main():
                     f"头部相机视频已落盘: {head_video_path}  frames={head_frames}"
                 )
 
-            completed = not truncated and not episode_done
+            completed = not truncated
             episode_results.append(completed)
             dist_txt = f"{min_btn_dist:.4f}m" if min_btn_dist is not None else "n/a"
             pressed = max_btn_q >= PRESS_DISP_MIN or max_btn_disp >= PRESS_DISP_MIN
             touched = (
-                max_btn_q >= args.touch_btn_q_min
-                or max_btn_disp >= args.touch_btn_q_min
+                max_btn_q >= TOUCH_BTN_Q_MIN
+                or max_btn_disp >= TOUCH_BTN_Q_MIN
             )
             orca_logger.info(
                 f"[{'done' if completed else 'stopped'}] "
-                f"Round {episode_index + 1} {current_prompt} finished: steps={step}  truncated={truncated}  "
-                f"early_stop={episode_done}  "
+                f"Episode {episode_index + 1} {current_prompt} finished: steps={step}  "
+                f"truncated={truncated}  "
                 f"min_ee_btn={dist_txt}  "
                 f"max_btn_disp={max_btn_disp:.5f}  max_btn_q={max_btn_q:.5f}  "
                 f"touched={touched}  pressed={pressed}"
             )
-            if (
-                args.enable_scorer
-                and scorer is not None
-                and args.targets
-                and (job_index + 1) % n_colors == 0
-            ):
-                try:
-                    summary = _finish_official_scorer(scorer, args.local_only)
-                    round_summaries.append(summary)
-                    orca_logger.info(
-                        f"[scorer] round {episode_index + 1}/{args.episodes} "
-                        f"score={summary.get('score')}/{summary.get('max_score')}"
-                    )
-                except Exception as _se:
-                    orca_logger.warning(f"[scorer] round finish failed: {_se}")
-                scorer = None
 
         done_count = sum(1 for ok in episode_results if ok)
         orca_logger.info(f"全部 {len(episode_results)} 集完成: {done_count} 集完整跑完")
-        if round_summaries:
-            for i, summary in enumerate(round_summaries, 1):
-                orca_logger.info(
-                    f"[scorer] 汇总 round {i}: "
-                    f"score={summary.get('score')}/{summary.get('max_score')}  "
-                    f"success_rate={summary.get('success_rate')}"
-                )
 
     finally:
-        if scorer is not None:
-            try:
-                _finish_official_scorer(scorer, args.local_only)
-            except Exception as _se:
-                orca_logger.warning(f"[scorer] finish failed: {_se}")
         for _w in _head_writers:
             try:
                 _w.release()

@@ -55,24 +55,18 @@ fi
 export NUMBA_DISABLE_JIT=1
 export SOUTHGRID_SRC
 export OPENPI_CLIENT_SRC
-export ORCA_SCORING_SERVER_URL=
-export ORCA_SCORING_VIDEO_ENABLED=0
 
 echo "[$(date '+%H:%M:%S')] start v10 pure ${EPISODES}x4" | tee "$LOG_DIR/runner.log"
 cd "$ROOT"
-"$PYTHON" -u eval_g1_omnipicker_lerobot.py \
-  --host localhost --port 8010 \
-  --exec_horizon 50 \
-  --action_repeat 10 \
-  --early_stop_on_touch \
-  --max_steps 2000 \
-  --episodes "$EPISODES" \
-  --targets red green blue yellow \
-  --task-id task2_button_press \
-  --robot-id g1_omnipicker \
-  --local-only \
-  --no_preview --no_head_video \
-  > "$LOG_DIR/eval.log" 2>&1
-rc=$?
+rc=0
+for color in 红 绿 蓝 黄; do
+  echo "[$(date '+%H:%M:%S')] prompt 按${color}色按钮" | tee -a "$LOG_DIR/runner.log"
+  "$PYTHON" -u eval_g1_omnipicker_lerobot.py \
+    --host localhost --port 8010 \
+    --prompt "按${color}色按钮" \
+    --episodes "$EPISODES" \
+    --no_preview --no_head_video \
+    > "$LOG_DIR/eval_${color}.log" 2>&1 || rc=$?
+done
 echo "[$(date '+%H:%M:%S')] done exit=$rc" | tee -a "$LOG_DIR/runner.log"
 exit $rc

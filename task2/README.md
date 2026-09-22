@@ -91,17 +91,9 @@ bash run_v10_9999_local_noseek.sh
 EPISODES=3 bash run_v10_9999_local_noseek.sh
 ```
 
-日志在 `logs/v10_9999_<轮数>x4/eval.log`。
+日志在 `logs/v10_9999_<轮数>x4/eval_<颜色>.log`。
 
-固定参数：
-
-- `exec_horizon=50`：一次执行模型给出的 50 步
-- `action_repeat=10`：每个动作重复 10 个控制步，对齐 20 fps 采集
-- `max_steps=2000`
-- 碰到按钮（关节位移 ≥ 1 mm）后再保压 40 步结束该颜色
-- 本机评分，不上报
-
-要改步数、horizon 或重复次数，直接改脚本里的这几个参数，或自己调用 `eval_g1_omnipicker_lerobot.py`。不要再加 `--score-seek`、`--min-score-span`、`--p2-wait`、`--hold-render-hz`、`--score-hold-s`，这些参数已经从脚本里删掉了。
+控制方式和官方脚本一样：一次推理返回的整段动作全部执行，然后继续要下一段，直到 `max_steps`。不按距离或按钮位移提前停。不截断，不锁左臂，没有评分。默认 `max_steps=500`，`action_repeat=1`。
 
 ## 相机
 
@@ -115,10 +107,9 @@ EPISODES=3 bash run_v10_9999_local_noseek.sh
 
 ## 怎么读结果
 
-日志里每个颜色有一行 `finished:`。
+每个颜色的日志末尾有一行 `finished:`。
 
-- `touched=True`：按钮位移达到 1 mm，算碰到
+- `touched=True`：按钮位移达到 1 mm
 - `pressed=True`：按钮位移达到 0.5 mm
-- 官方分看末端到按钮 site 的距离，大约 5 cm 就是接近满分。满分不等于按到了按钮
 
-2026-09-22 用这套参数跑过 1 轮四色：官方分 39.8657/39.8657，四色都没碰到。黄钮最大位移 0.17 mm。左相机开着再跑一轮是 39.8659，黄钮 0.26 mm，仍然没碰到。
+没有评分服务，也不上报。
