@@ -113,12 +113,10 @@ task2/9999.zip
 
    看到 `server listening` 后保持该终端运行。
 
-4. 在 OrcaLab 打开 `task2/g1_button.json` 并点击 **Play**。另开终端设置仿真依赖和 SouthGrid 源码路径：
+4. 在 OrcaLab 打开 `task2/g1_button.json` 并点击 **Play**。另开终端设置评测 Python 环境：
 
    ```bash
    export PYTHON=/path/to/orcalab/bin/python
-   # 如需使用另一份 SouthGrid 源码，可覆盖本地副本：
-   # export SOUTHGRID_SRC=/path/to/SouthGrid/src
    # 如 orca_gym 不在当前环境中：
    # export ORCA_GYM_ROOT=/path/to/OrcaGym
    ```
@@ -129,8 +127,7 @@ task2/9999.zip
 
    ```bash
    cd /path/to/southgrid/task2
-   SOUTHGRID_SRC="$SOUTHGRID_SRC" PYTHON="$PYTHON" \
-     bash run_v10_9999_local_noseek.sh
+   PYTHON="$PYTHON" bash run_v10_9999_local_noseek.sh
    ```
 
    多跑几轮可设置 `EPISODES`：

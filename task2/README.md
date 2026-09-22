@@ -83,7 +83,7 @@ bash run_v10_9999_local_noseek.sh
 
 默认情况下脚本会使用 `task2/` 内的模块。`orca_gym`、`openpi_client`、OpenCV、SciPy、h5py、PyAV 等第三方包仍需在 Python 环境中安装；它们不是 SouthGrid 脚本，可以通过 `ORCA_GYM_ROOT` 追加 OrcaGym 源码路径。
 
-在本目录下执行。默认 1 轮、红绿蓝黄各一次。三轮：
+在本目录下执行。默认 1 轮、红绿蓝黄各一次。多轮：
 
 ```bash
 EPISODES=3 bash run_v10_9999_local_noseek.sh
