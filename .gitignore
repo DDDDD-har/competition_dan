@@ -10,3 +10,4 @@ __pycache__/
 # Local task2 evaluation output.
 task2/logs/
 task2/.orca_scorer_client/
+task1_opensource/.orca_scorer_client/
