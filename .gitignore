@@ -1,0 +1,8 @@
+# Large runtime artifacts are hosted in the Hugging Face dataset instead.
+task2/9999.zip
+task1_opensource/data/world_anchored_rtabmap_20260821T195241+0800/rtabmap.db
+
+# Python and local test/build output.
+__pycache__/
+*.py[cod]
+.pytest_cache/

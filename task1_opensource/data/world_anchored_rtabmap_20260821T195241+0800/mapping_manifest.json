@@ -1,0 +1,64 @@
+{
+  "format": "world_anchored_rtabmap_mapping_v1",
+  "scene": "g1_button.json",
+  "robot_name": "g1_omnipicker",
+  "database": "rtabmap.db",
+  "mapping_mode": "resume",
+  "resume": {
+    "source_database": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/world_anchored_rtabmap_20260821T192259+0800/rtabmap.db",
+    "source_sha256": "da15615fdd9be46acbf2639651b14e2a5035253c6c86962148b0755d6b193567",
+    "copied_database_sha256": "da15615fdd9be46acbf2639651b14e2a5035253c6c86962148b0755d6b193567",
+    "source_database_modified": false
+  },
+  "initial_world_pose": {
+    "position_xyz": [
+      46.325946808,
+      -27.572000504,
+      0.202661902
+    ],
+    "yaw_rad": 3.141592653589793,
+    "frame": "world",
+    "source": "MuJoCo initial read only"
+  },
+  "rgbd_odometry_initial_pose": "46.325946808 -27.572000504 0 0 0 3.14159265359",
+  "initial_pose_contract": "x y z roll pitch yaw in the RTAB-Map odom frame",
+  "post_mapping_world_to_map_calibration_required": true,
+  "camera_extrinsic": {
+    "camera_frame": "camera_head_optical_frame",
+    "base_frame": "base_link",
+    "translation": [
+      0.25823978700000083,
+      -0.010995800692722182,
+      1.2215705904641083
+    ],
+    "quaternion_xyzw": [
+      0.6123724356957945,
+      -0.6123724356957946,
+      0.35355339059327384,
+      -0.35355339059327384
+    ],
+    "vertical_fov_deg": 90.0
+  },
+  "odom_source": "g1_omnipicker root truth",
+  "visual_odom_topic": "/visual_odom",
+  "wheel_odom_used": false,
+  "truth_odom_used": true,
+  "joint_pose_initialization_applied": false,
+  "joint_pose_hold_source": "live OrcaLab state captured at motion-worker connection",
+  "waypoint_file": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/world_anchored_rtabmap_20260821T195241+0800/waypoints.yaml",
+  "waypoint_request_file": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/world_anchored_rtabmap_20260821T195241+0800/waypoint_request.json",
+  "waypoint_keys": "1=A 2=B 3=C; services /task1/record_waypoint_{a,b,c}",
+  "occupancy_grid_parameters": {
+    "from_depth": true,
+    "range_max_m": 3.0,
+    "max_ground_height_m": 0.05,
+    "max_obstacle_height_m": 1.5
+  },
+  "views": {
+    "rviz2": true,
+    "rtabmapviz": true
+  },
+  "status": "succeeded",
+  "map_saved": true,
+  "waypoints_recorded": false
+}

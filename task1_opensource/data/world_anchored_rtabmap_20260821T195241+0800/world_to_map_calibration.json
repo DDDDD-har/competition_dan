@@ -1,0 +1,19 @@
+{
+  "format": "task1_world_to_map_se2_v2",
+  "source_frame": "world",
+  "target_frame": "map",
+  "translation_xy": [
+    -0.00764505709019403,
+    -0.003253432638057774
+  ],
+  "yaw_rad": 7.944649870619366e-05,
+  "method": "multi-point least-squares position fit with independent yaw residual audit",
+  "correspondence_count": 3,
+  "world_position_spread_sum_sq_m2": 131.45957769870137,
+  "created_at": "2026-08-31T19:03:42.670572+08:00",
+  "database": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/world_anchored_rtabmap_20260821T195241+0800/rtabmap.db",
+  "mapping_manifest": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/world_anchored_rtabmap_20260821T195241+0800/mapping_manifest.json",
+  "global_geometry_acceptance": "/home/dan/simulation/orcalab_pj/AgiBot_g1_orcalab/task_1/data/g1_scorer_central_0p05_20260831T185339/global_geometry_acceptance.json",
+  "truth_feedback_used": true,
+  "truth_used_for_offline_calibration": true
+}
