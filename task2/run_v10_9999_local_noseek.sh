@@ -35,13 +35,18 @@ if [[ ! -f "$SOUTHGRID_SRC/conf/g1_omnipicker_conf.py" ]]; then
   echo "需要存在：$SOUTHGRID_SRC/conf/g1_omnipicker_conf.py" >&2
   exit 1
 fi
+OPENPI_CLIENT_SRC="${OPENPI_CLIENT_SRC:-}"
+if [[ -z "$OPENPI_CLIENT_SRC" && -f "/home/dan/simulation/openpi/packages/openpi-client/src/openpi_client/__init__.py" ]]; then
+  OPENPI_CLIENT_SRC="/home/dan/simulation/openpi/packages/openpi-client/src"
+fi
 if [[ -n "${ORCA_GYM_ROOT:-}" ]]; then
-  export PYTHONPATH="${ORCA_GYM_ROOT}:${SOUTHGRID_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+  export PYTHONPATH="${ORCA_GYM_ROOT}:${SOUTHGRID_SRC}${OPENPI_CLIENT_SRC:+:$OPENPI_CLIENT_SRC}${PYTHONPATH:+:$PYTHONPATH}"
 else
-  export PYTHONPATH="${SOUTHGRID_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+  export PYTHONPATH="${SOUTHGRID_SRC}${OPENPI_CLIENT_SRC:+:$OPENPI_CLIENT_SRC}${PYTHONPATH:+:$PYTHONPATH}"
 fi
 export NUMBA_DISABLE_JIT=1
 export SOUTHGRID_SRC
+export OPENPI_CLIENT_SRC
 export ORCA_SCORING_SERVER_URL=
 export ORCA_SCORING_VIDEO_ENABLED=0
 
