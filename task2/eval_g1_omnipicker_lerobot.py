@@ -16,7 +16,22 @@ import cv2
 import numpy as np
 from yaml import Loader, load
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+def _southgrid_src() -> str:
+    """脚本放在 SouthGrid 树内或 /home/dan/southgrid/task2 时都能找到 src。"""
+    here = os.path.dirname(os.path.realpath(__file__))
+    candidates = [
+        here,
+        os.path.abspath(os.path.join(here, "../../..")),
+        os.environ.get("SOUTHGRID_SRC", ""),
+        "/home/dan/simulation/SouthGrid/src",
+    ]
+    for root in candidates:
+        if root and os.path.isfile(os.path.join(root, "conf", "g1_omnipicker_conf.py")):
+            return root
+    return candidates[0]
+
+
+project_root = _southgrid_src()
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -44,6 +59,12 @@ STREAM_TRIGGER_PATH = "/tmp/eval_g1_lerobot_stream"
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
 log_dir = os.path.join(base_dir, "logs")
+_rel_task_config = os.path.join(base_dir, "../../dataCollection/common/example.yaml")
+_DEFAULT_TASK_CONFIG = (
+    _rel_task_config
+    if os.path.isfile(_rel_task_config)
+    else os.path.join(project_root, "examples/dataCollection/common/example.yaml")
+)
 
 orca_logger = get_orca_logger(
     name="EvalG1Lerobot",
@@ -400,16 +421,6 @@ _PROMPT_BUTTON_JOINTS = {
 }
 PRESS_DISP_MIN = 0.0005
 TOUCH_BTN_Q_MIN = 0.001  # 按钮关节位移 ≥1mm 视为碰到按钮
-# Task2 官方曲线顶点在 ee_site_right↔按钮 site = 0.05m（10 分）。
-# 0.00m→6 分，0.10m→6 分。策略自然贴近约 7cm，需末端微调到 5cm。
-SCORE_PEAK_DIST = 0.05
-SCORE_SEEK_ENTER = 0.14
-# P2：四色均 ≤0.10m 且 best_frame 跨度 ≤20s 则 ×0.6。跨度须 >20s。
-DEFAULT_MIN_SCORE_SPAN_S = 22.0
-# 官方评分 10Hz 墙钟采样；OrcaLab 只在 gym.render() 时拿到本地 qpos。
-# 保压必须 ≥30Hz 强制同步，否则 160Hz 控制环上的最近点会被节流丢掉。
-DEFAULT_HOLD_RENDER_HZ = 33.0
-DEFAULT_SCORE_HOLD_S = 0.5
 TARGET_PROMPTS = {
     "red": "按红色按钮",
     "green": "按绿色按钮",
@@ -675,147 +686,6 @@ def _site_distance(env, a: str, b: str) -> float | None:
         return None
 
 
-def _force_env_render(env) -> None:
-    """绕过 fps 节流，把当前 qpos 同步到 OrcaLab（评分服务读服务器状态）。"""
-    gym = getattr(env, "gym", None)
-    loop = getattr(env, "loop", None)
-    if gym is not None and loop is not None and hasattr(gym, "render"):
-        loop.run_until_complete(gym.render())
-        if hasattr(env, "do_body_manipulation"):
-            env.do_body_manipulation()
-        if hasattr(env, "_render_time_step"):
-            env._render_time_step = time.perf_counter()
-        return
-    env.render()
-
-
-def _score_hold_render(
-    env,
-    manager,
-    duration_s: float,
-    hz: float,
-    *,
-    log_prefix: str = "score-hold",
-) -> int:
-    """保压：保持当前 OSC 目标，按 hz 步进并强制 render，让 10Hz 评分采到足够帧。"""
-    if duration_s <= 0:
-        return 0
-    hz = max(float(hz), 30.0)
-    dt = 1.0 / hz
-    t0 = time.time()
-    n = 0
-    last_log = 0.0
-    while time.time() - t0 < duration_s:
-        start = time.time()
-        action = manager.run_controllers()
-        env.step(action)
-        _force_env_render(env)
-        n += 1
-        elapsed = time.time() - t0
-        if elapsed - last_log >= 0.5 or n == 1:
-            orca_logger.info(
-                f"[{log_prefix}] {elapsed:.2f}/{duration_s:.2f}s frames={n} hz={hz:.0f}"
-            )
-            last_log = elapsed
-        remain = dt - (time.time() - start)
-        if remain > 0:
-            time.sleep(remain)
-    return n
-
-
-def _site_xpos_b(env, name: str, base_body: str) -> np.ndarray | None:
-    for body in (base_body, f"g1_omnipicker_{base_body}"):
-        try:
-            data = env.query_site_pos_and_quat_B([name], [body])
-            if name in data:
-                return np.asarray(data[name]["xpos"], dtype=np.float64)
-        except Exception:
-            continue
-    return None
-
-
-def _score_seek_r_pos(
-    env,
-    r_pos_b: np.ndarray,
-    ee_site: str,
-    btn_site: str,
-    other_sites: list[str],
-    base_body: str,
-    peak: float = SCORE_PEAK_DIST,
-    enter: float = SCORE_SEEK_ENTER,
-    align_center: bool = False,
-    cmd_x: float | None = None,
-    full_blend: bool = False,
-    feedback: bool = False,
-    max_step: float = 0.0,
-    y_off: float = 0.0,
-    z_off: float = 0.0,
-) -> tuple[np.ndarray, float | None, bool]:
-    """把右手目标拽到距目标按钮 peak 米处，避开更近的其它按钮。
-
-    align_center=True 时锁到按钮 site 的 YZ（帽面中心），沿接近轴（基座 X）停在 peak。
-    官方分是 ||ee_center_site_r - button_site||，侧向偏差会直接拉低抛物线得分。
-
-    feedback=True 时：若实际距离仍大于 peak+1cm，把跟踪误差加到命令上
-    （OSC 常比命令落后 1–2cm），并卡在键前 ≥1cm，不过冲进柜。
-
-    返回 (新 r_pos_b, 当前 EE-按钮距离, 是否已接管)。
-    """
-    ee_b = _site_xpos_b(env, ee_site, base_body)
-    btn_b = _site_xpos_b(env, btn_site, base_body)
-    if ee_b is None or btn_b is None:
-        return np.asarray(r_pos_b, dtype=np.float32), None, False
-    delta = ee_b - btn_b
-    dist = float(np.linalg.norm(delta))
-    if dist < 1e-6 or dist > enter:
-        return np.asarray(r_pos_b, dtype=np.float32), dist, False
-    if align_center:
-        dx = float(delta[0])
-        sign = -1.0 if dx < 0.0 else 1.0
-        hat = np.array([sign, 0.0, 0.0], dtype=np.float64)
-        x_off = float(cmd_x) if cmd_x is not None else sign * peak
-        desired = btn_b.copy()
-        desired[0] = btn_b[0] + x_off
-        desired[1] = btn_b[1] + float(y_off)
-        desired[2] = btn_b[2] + float(z_off)
-    else:
-        hat = delta / dist
-        desired = btn_b + hat * peak
-    for other in other_sites:
-        other_b = _site_xpos_b(env, other, base_body)
-        if other_b is None:
-            continue
-        if float(np.linalg.norm(desired - other_b)) + 1e-6 < peak:
-            away = desired - other_b
-            n = float(np.linalg.norm(away))
-            if n > 1e-9:
-                hat = hat + 0.6 * (away / n)
-                hat = hat / float(np.linalg.norm(hat))
-                desired = btn_b + hat * peak
-    if feedback and dist > peak + 0.010:
-        # 只补接近轴 X。YZ 加倍会把末端拽离帽面中心，欧氏距离更差。
-        cmd = desired.copy()
-        cmd[0] = float(desired[0]) + (float(desired[0]) - float(ee_b[0]))
-        if align_center:
-            if sign < 0.0:
-                cmd[0] = min(float(cmd[0]), float(btn_b[0]) - 0.01)
-            else:
-                cmd[0] = max(float(cmd[0]), float(btn_b[0]) + 0.01)
-        desired = cmd
-    alpha = float(np.clip((enter - dist) / max(enter - peak, 1e-6), 0.0, 1.0))
-    if full_blend:
-        alpha = 1.0
-    src = np.asarray(r_pos_b, dtype=np.float64)
-    blended = (1.0 - alpha) * src + alpha * desired
-    step_lim = float(max_step)
-    if step_lim > 0.0:
-        delta = blended - src
-        n = float(np.linalg.norm(delta))
-        if n > step_lim:
-            blended = src + delta * (step_lim / n)
-    return blended.astype(np.float32), dist, True
-
-
 def _open_head_video_writer(path: str, hw: tuple[int, int], fps: float) -> cv2.VideoWriter:
     height, width = int(hw[0]), int(hw[1])
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -851,7 +721,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="G1 OmniPicker OpenPI 远程策略推理评估"
     )
-    parser.add_argument("--task_config", type=str, default="../../dataCollection/common/example.yaml",
+    parser.add_argument("--task_config", type=str, default=_DEFAULT_TASK_CONFIG,
                         help="场景配置 YAML（默认 example.yaml）")
     parser.add_argument("--orcagym_addr", type=str, default="localhost:50051")
     parser.add_argument("--host", type=str, default="localhost", help="策略服务器主机")
@@ -926,115 +796,6 @@ def main():
         default=40,
         help="early_stop_on_touch 时，触碰后额外执行的控制步数（默认 40，对齐 scripted 保压段）",
     )
-    parser.add_argument(
-        "--score-seek",
-        dest="score_seek",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="接近按钮后把右手 EE 锁到官方曲线顶点 0.05m（默认开）",
-    )
-    parser.add_argument(
-        "--score-peak-tol",
-        dest="score_peak_tol",
-        type=float,
-        default=0.022,
-        help="score-seek 时 |d-0.05| 小于该值则开始保压早停（米）",
-    )
-    parser.add_argument(
-        "--score-seek-center",
-        dest="score_seek_center",
-        action="store_true",
-        help="score-seek 时把 EE 锁到按钮 site 中心（YZ），沿 X 停在 0.05m；默认沿当前射线",
-    )
-    parser.add_argument(
-        "--score-seek-x",
-        dest="score_seek_x",
-        type=float,
-        default=None,
-        help="align-center 时命令 EE 相对按钮 site 的基座 X（米）。"
-        "默认 -0.05（键前 5cm）；0=贴 site；+0.03=过冲进柜（对齐 ceiling 教师）",
-    )
-    parser.add_argument(
-        "--score-seek-x-color",
-        dest="score_seek_x_color",
-        nargs="*",
-        default=None,
-        help="分色覆盖 seek-x，如 green=0.03 yellow=0.05",
-    )
-    parser.add_argument(
-        "--score-seek-y-color",
-        dest="score_seek_y_color",
-        nargs="*",
-        default=None,
-        help="分色 Y 偏移（米），加在按钮 site 上。默认 0。如 yellow=-0.008",
-    )
-    parser.add_argument(
-        "--score-seek-z-color",
-        dest="score_seek_z_color",
-        nargs="*",
-        default=None,
-        help="分色 Z 偏移（米），加在按钮 site 上。默认 0。如 yellow=0.011",
-    )
-    parser.add_argument(
-        "--score-seek-full",
-        dest="score_seek_full",
-        action="store_true",
-        help="进入 0.14m 后完全用 seek 目标，不再与策略动作混合",
-    )
-    parser.add_argument(
-        "--score-seek-fb",
-        dest="score_seek_fb",
-        action="store_true",
-        help="d>6cm 时把 EE 跟踪误差加到 OSC 命令上，卡在键前 1cm，不过冲进柜",
-    )
-    parser.add_argument(
-        "--score-seek-reset-quat",
-        dest="score_seek_reset_quat",
-        action="store_true",
-        help="seek 接管时右手四元数锁到本集复位姿态（OSC 天花板：过冲+黄 Y 补偿配套）",
-    )
-    parser.add_argument(
-        "--score-seek-max-step",
-        dest="score_seek_max_step",
-        type=float,
-        default=0.0,
-        help="每次动作 seek 命令相对策略最多移动这么多米；0=不限（full 会瞬移）。"
-        "例如 0.005≈每步 5mm，避免突然加速",
-    )
-    parser.add_argument(
-        "--early-stop-while-seek",
-        dest="early_stop_while_seek",
-        action="store_true",
-        help="seek 接管时仍允许 touch 早停（按实后保压结束，避免打满 max_steps）",
-    )
-    parser.add_argument(
-        "--min-score-span",
-        dest="min_score_span",
-        type=float,
-        default=None,
-        help="评分时四色 best_frame 最小墙钟跨度（秒）。默认 22，避开 Task2 P2 ≤20s ×0.6",
-    )
-    parser.add_argument(
-        "--p2-wait",
-        dest="p2_wait",
-        choices=["hold_at_third", "even"],
-        default="hold_at_third",
-        help="P2 避让停留：hold_at_third=第三色按完后一次凑齐；even=四色均分 min-score-span",
-    )
-    parser.add_argument(
-        "--hold-render-hz",
-        dest="hold_render_hz",
-        type=float,
-        default=None,
-        help="Task2 保压阶段强制 render 频率（Hz）。评分时默认 33（须≥30）；0=关闭",
-    )
-    parser.add_argument(
-        "--score-hold-s",
-        dest="score_hold_s",
-        type=float,
-        default=None,
-        help="每色结束后保压墙钟秒数，强制 render 给 10Hz 评分采样。评分时默认 0.5",
-    )
     parser.add_argument("--team-id", dest="team_id", default=None, help="评分队伍 ID（可省略，读 ~/.config/orca_scoring）")
     parser.add_argument("--team-token", dest="team_token", default=None, help="评分队伍 token")
     parser.add_argument("--robot-id", dest="robot_id", default="g1_omnipicker")
@@ -1088,75 +849,10 @@ def main():
         parser.error("--touch_btn_q_min must be >= 0")
     if args.early_stop_hold_steps < 1:
         parser.error("--early_stop_hold_steps must be >= 1")
-    if args.min_score_span is None:
-        args.min_score_span = DEFAULT_MIN_SCORE_SPAN_S if args.enable_scorer else 0.0
-    if args.min_score_span < 0:
-        parser.error("--min-score-span must be >= 0")
-    if args.score_peak_tol < 0:
-        parser.error("--score-peak-tol must be >= 0")
-    if args.score_seek_max_step < 0:
-        parser.error("--score-seek-max-step must be >= 0")
-    if args.hold_render_hz is None:
-        args.hold_render_hz = DEFAULT_HOLD_RENDER_HZ if args.enable_scorer else 0.0
-    if args.score_hold_s is None:
-        args.score_hold_s = DEFAULT_SCORE_HOLD_S if args.enable_scorer else 0.0
-    if args.hold_render_hz < 0:
-        parser.error("--hold-render-hz must be >= 0")
-    if 0.0 < args.hold_render_hz < 30.0:
-        parser.error("--hold-render-hz 须为 0（关）或 ≥30")
-    if args.score_hold_s < 0:
-        parser.error("--score-hold-s must be >= 0")
-    seek_x_by_color: dict[str, float] = {}
-    for item in args.score_seek_x_color or []:
-        if "=" not in item:
-            parser.error(f"--score-seek-x-color 需要 color=value，收到 {item!r}")
-        _ck, _cv = item.split("=", 1)
-        _ck = _ck.strip().lower()
-        if _ck not in TARGET_PROMPTS:
-            parser.error(f"--score-seek-x-color 未知颜色 {_ck!r}")
-        try:
-            seek_x_by_color[_ck] = float(_cv)
-        except ValueError:
-            parser.error(f"--score-seek-x-color 无效数值 {item!r}")
-    args.seek_x_by_color = seek_x_by_color
-    seek_y_by_color: dict[str, float] = {}
-    for item in args.score_seek_y_color or []:
-        if "=" not in item:
-            parser.error(f"--score-seek-y-color 需要 color=value，收到 {item!r}")
-        _ck, _cv = item.split("=", 1)
-        _ck = _ck.strip().lower()
-        if _ck not in TARGET_PROMPTS:
-            parser.error(f"--score-seek-y-color 未知颜色 {_ck!r}")
-        try:
-            seek_y_by_color[_ck] = float(_cv)
-        except ValueError:
-            parser.error(f"--score-seek-y-color 无效数值 {item!r}")
-    args.seek_y_by_color = seek_y_by_color
-    seek_z_by_color: dict[str, float] = {}
-    for item in args.score_seek_z_color or []:
-        if "=" not in item:
-            parser.error(f"--score-seek-z-color 需要 color=value，收到 {item!r}")
-        _ck, _cv = item.split("=", 1)
-        _ck = _ck.strip().lower()
-        if _ck not in TARGET_PROMPTS:
-            parser.error(f"--score-seek-z-color 未知颜色 {_ck!r}")
-        try:
-            seek_z_by_color[_ck] = float(_cv)
-        except ValueError:
-            parser.error(f"--score-seek-z-color 无效数值 {item!r}")
-    args.seek_z_by_color = seek_z_by_color
     orca_logger.info(
         f"infer: horizon={args.exec_horizon} repeat={args.action_repeat} "
-        f"score_seek={args.score_seek} peak_tol={args.score_peak_tol} "
-        f"seek_center={args.score_seek_center} seek_x={args.score_seek_x} "
-        f"seek_x_color={seek_x_by_color or None} "
-        f"seek_y_color={seek_y_by_color or None} seek_z_color={seek_z_by_color or None} "
-        f"seek_full={args.score_seek_full} "
-        f"seek_fb={args.score_seek_fb} seek_max_step={args.score_seek_max_step} "
-        f"seek_reset_quat={args.score_seek_reset_quat} "
-        f"early_stop_while_seek={args.early_stop_while_seek} "
-        f"min_score_span={args.min_score_span}s p2_wait={args.p2_wait} "
-        f"hold_render_hz={args.hold_render_hz} score_hold_s={args.score_hold_s}s "
+        f"max_steps={args.max_steps} episodes={args.episodes} "
+        f"early_stop_on_touch={args.early_stop_on_touch} "
         f"scorer={args.enable_scorer}"
     )
 
@@ -1238,8 +934,6 @@ def main():
         else:
             jobs = [(None, args.prompt, ep) for ep in range(args.episodes)]
         n_colors = len(args.targets) if args.targets else 1
-        round_first_done_ts: float | None = None
-        _seek_base_body = agent_conf.base_body
 
         for job_index, (color, current_prompt, episode_index) in enumerate(jobs):
             color_tag = f" {color}" if color else ""
@@ -1250,7 +944,6 @@ def main():
 
             env.reset()
             time.sleep(0.1)
-            color_index_in_round = job_index % n_colors if n_colors else 0
 
             if not manager.update_scene():
                 orca_logger.error("update_scene 失败，退出")
@@ -1301,7 +994,6 @@ def main():
                 f"左臂已锁定 hold_pos={np.asarray(device._l_hold_pos).round(4).tolist()} "
                 f"lock={device.lock_left_arm}"
             )
-            reset_r_quat = np.asarray(_init_action_apply["r_quat_b"], dtype=np.float32).copy()
 
             # 首集：场景就绪后启动相机内存流并连接策略服务器
             if job_index == 0:
@@ -1396,12 +1088,6 @@ def main():
             btn_site_key = _button_site_for_prompt(current_prompt)
             btn_site = _resolve_site_name(env, btn_site_key) if btn_site_key else None
             btn_joint = _resolve_joint_name(env, _button_joint_for_prompt(current_prompt) or "")
-            other_btn_sites: list[str] = []
-            if btn_site:
-                for _key, _site_key in _PROMPT_BUTTON_SITES.items():
-                    _resolved = _resolve_site_name(env, _site_key)
-                    if _resolved and _resolved != btn_site:
-                        other_btn_sites.append(_resolved)
             min_btn_dist: float | None = None
             btn_q0 = _joint_abs(env, btn_joint) if btn_joint else None
             max_btn_q = 0.0
@@ -1414,11 +1100,6 @@ def main():
 
             episode_done = False
             touch_hold_steps = 0
-            peak_hold_steps = 0
-            seeking_now = False
-            peak_hold_needed = (
-                max(args.early_stop_hold_steps, 80) if args.score_seek else args.early_stop_hold_steps
-            )
 
             while step < args.max_steps and not truncated and not episode_done:
                 # state 由本体感知构造，与采集数据集 observation.state 一致。
@@ -1451,49 +1132,6 @@ def main():
                             "r_quat_b": device.r_quat_b,
                         },
                     )
-                    seeking_now = False
-                    if args.score_seek and ee_site and btn_site:
-                        _cmd_x = args.seek_x_by_color.get(color) if color else None
-                        if _cmd_x is None:
-                            _cmd_x = args.score_seek_x
-                        _y_off = args.seek_y_by_color.get(color, 0.0) if color else 0.0
-                        _z_off = args.seek_z_by_color.get(color, 0.0) if color else 0.0
-                        parsed_action["r_pos_b"], _seek_d, seeking_now = _score_seek_r_pos(
-                            env,
-                            parsed_action["r_pos_b"],
-                            ee_site,
-                            btn_site,
-                            other_btn_sites,
-                            _seek_base_body,
-                            align_center=args.score_seek_center,
-                            cmd_x=_cmd_x,
-                            full_blend=args.score_seek_full,
-                            feedback=args.score_seek_fb,
-                            max_step=args.score_seek_max_step,
-                            y_off=_y_off,
-                            z_off=_z_off,
-                        )
-                        if seeking_now and step % 50 == 0:
-                            _cmd = np.asarray(parsed_action["r_pos_b"], dtype=np.float64)
-                            _ee = _site_xpos_b(env, ee_site, _seek_base_body)
-                            _ee_txt = (
-                                f"ee=[{_ee[0]:+.3f},{_ee[1]:+.3f},{_ee[2]:+.3f}]"
-                                if _ee is not None
-                                else "ee=None"
-                            )
-                            orca_logger.info(
-                                f"score-seek: d={_seek_d:.4f}m cmd_x={_cmd_x} "
-                                f"cmd=[{_cmd[0]:+.3f},{_cmd[1]:+.3f},{_cmd[2]:+.3f}] "
-                                f"{_ee_txt} y_off={_y_off} z_off={_z_off} "
-                                f"fb={args.score_seek_fb} reset_quat={args.score_seek_reset_quat} "
-                                f"→ peak {SCORE_PEAK_DIST:.2f}m"
-                            )
-                    if (
-                        args.score_seek_reset_quat
-                        and seeking_now
-                        and reset_r_quat is not None
-                    ):
-                        parsed_action["r_quat_b"] = reset_r_quat.copy()
                     device.set_target(**action_dict_for_apply(parsed_action))
 
                     for _ in range(args.action_repeat):
@@ -1533,22 +1171,7 @@ def main():
                                     btn_q0 = _q
                                 max_btn_q = max(max_btn_q, abs(_q - btn_q0))
 
-                        if args.score_seek and _d is not None:
-                            if abs(_d - SCORE_PEAK_DIST) <= args.score_peak_tol:
-                                peak_hold_steps += 1
-                                if peak_hold_steps >= peak_hold_needed:
-                                    episode_done = True
-                                    orca_logger.info(
-                                        f"early stop: score peak "
-                                        f"(ee_btn={_d:.4f}m, hold={peak_hold_steps})"
-                                    )
-                            else:
-                                peak_hold_steps = 0
-                        if (
-                            args.early_stop_on_touch
-                            and (args.early_stop_while_seek or not seeking_now)
-                            and not episode_done
-                        ):
+                        if args.early_stop_on_touch and not episode_done:
                             touched_now = (
                                 max_btn_q >= args.touch_btn_q_min
                                 or max_btn_disp >= args.touch_btn_q_min
@@ -1584,12 +1207,6 @@ def main():
                                         truncated = True
                             except Exception:
                                 pass
-
-                        _holding = args.hold_render_hz >= 30.0 and (
-                            peak_hold_steps > 0 or touch_hold_steps > 0
-                        )
-                        if _holding:
-                            _force_env_render(env)
 
                         _pt4 = time.perf_counter()
                         _TPROF["ctrl"]    += _pt1 - _pt0
@@ -1633,11 +1250,7 @@ def main():
                         if truncated:
                             break
 
-                        if _holding:
-                            remain = (1.0 / args.hold_render_hz) - (time.time() - start_time)
-                            if remain > 0:
-                                time.sleep(remain)
-                        elif args.sleep:
+                        if args.sleep:
                             remain = manager.real_time_step - (time.time() - start_time)
                             if remain > 0:
                                 time.sleep(remain)
@@ -1664,56 +1277,6 @@ def main():
                 f"max_btn_disp={max_btn_disp:.5f}  max_btn_q={max_btn_q:.5f}  "
                 f"touched={touched}  pressed={pressed}"
             )
-            if args.enable_scorer and args.score_hold_s > 0 and args.hold_render_hz >= 30.0:
-                _hold_n = _score_hold_render(
-                    env,
-                    manager,
-                    args.score_hold_s,
-                    args.hold_render_hz,
-                    log_prefix="score-hold",
-                )
-                orca_logger.info(
-                    f"[scorer] 按后保压 {args.score_hold_s:.2f}s @ "
-                    f"{args.hold_render_hz:.0f}Hz frames={_hold_n}"
-                )
-            if args.enable_scorer and n_colors >= 2 and color_index_in_round == 0:
-                round_first_done_ts = time.time()
-            # P2 等待停在当前按键上，不要空等 T 字。
-            if args.enable_scorer and args.min_score_span > 0 and n_colors >= 2:
-                if args.p2_wait == "even":
-                    dwell = args.min_score_span / float(n_colors)
-                    orca_logger.info(
-                        f"[scorer] P2 避让：停在当前按键 {dwell:.1f}s "
-                        f"（even，{n_colors} 色均分 min_span={args.min_score_span:.1f}s）"
-                    )
-                    if args.hold_render_hz >= 30.0:
-                        _score_hold_render(
-                            env, manager, dwell, args.hold_render_hz, log_prefix="p2-hold"
-                        )
-                    else:
-                        time.sleep(dwell)
-                elif (
-                    args.p2_wait == "hold_at_third"
-                    and color_index_in_round == n_colors - 2
-                    and round_first_done_ts is not None
-                ):
-                    remain = args.min_score_span - (time.time() - round_first_done_ts)
-                    if remain > 0:
-                        orca_logger.info(
-                            f"[scorer] P2 避让：停在当前按键 {remain:.1f}s "
-                            f"（hold_at_third，min_span={args.min_score_span:.1f}s），再复位去末色"
-                        )
-                        if args.hold_render_hz >= 30.0:
-                            _score_hold_render(
-                                env,
-                                manager,
-                                remain,
-                                args.hold_render_hz,
-                                log_prefix="p2-hold",
-                            )
-                        else:
-                            time.sleep(remain)
-
             if (
                 args.enable_scorer
                 and scorer is not None

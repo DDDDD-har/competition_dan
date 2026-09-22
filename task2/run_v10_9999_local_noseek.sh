@@ -1,26 +1,53 @@
 #!/usr/bin/env bash
-# v10/9999 本机 Task2：纯策略，不加 score-seek。
-# 对照 v5 无 seek 36.96、v7 39.70、v8 39.95、v9 39.93。禁止 --score-seek。
-# 官方评分走 :9010（Cursor 常占 :9000）。不覆盖 v5–v9 脚本。不上报。
+# v10/9999 本机 Task2 纯推理。
+# 策略动作原样执行，不改末端、不等待凑分。
+# 先另开终端把策略服务起在 localhost:8010，再跑本脚本。
 set -uo pipefail
 
-EVAL_DIR=/home/dan/simulation/SouthGrid/src/examples/inference/g1_omnipicker
-PYTHON=/home/dan/miniconda3/envs/orcalab_lerobot/bin/python
-EPISODES="${EPISODES:-3}"
-LOG_DIR="$EVAL_DIR/logs/v10_9999_noseek_${EPISODES}x4"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="${PYTHON:-python3}"
+EPISODES="${EPISODES:-1}"
+LOG_DIR="$ROOT/logs/v10_9999_${EPISODES}x4"
 mkdir -p "$LOG_DIR"
 
-export DISPLAY=:1
-export PYTHONPATH=/home/dan/simulation/OrcaGym:/home/dan/simulation/SouthGrid/src
+export DISPLAY="${DISPLAY:-:1}"
+# The task-specific client lives here, but its OrcaLab runtime modules live in
+# the full SouthGrid source tree. Auto-detect the local checkout when possible;
+# SOUTHGRID_SRC remains the override for other machines.
+if [[ -z "${SOUTHGRID_SRC:-}" ]]; then
+  for candidate in \
+    "$ROOT" \
+    "$ROOT/../src" \
+    "$ROOT/../../SouthGrid/src" \
+    "/home/dan/simulation/SouthGrid/src"; do
+    if [[ -f "$candidate/conf/g1_omnipicker_conf.py" ]]; then
+      SOUTHGRID_SRC="$candidate"
+      break
+    fi
+  done
+fi
+if [[ -z "${SOUTHGRID_SRC:-}" ]]; then
+  echo "找不到 SouthGrid/src。请设置 SOUTHGRID_SRC 为包含 conf/g1_omnipicker_conf.py 的 src 目录" >&2
+  exit 1
+fi
+if [[ ! -f "$SOUTHGRID_SRC/conf/g1_omnipicker_conf.py" ]]; then
+  echo "SOUTHGRID_SRC 不是有效的 SouthGrid/src：$SOUTHGRID_SRC" >&2
+  echo "需要存在：$SOUTHGRID_SRC/conf/g1_omnipicker_conf.py" >&2
+  exit 1
+fi
+if [[ -n "${ORCA_GYM_ROOT:-}" ]]; then
+  export PYTHONPATH="${ORCA_GYM_ROOT}:${SOUTHGRID_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+else
+  export PYTHONPATH="${SOUTHGRID_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+fi
 export NUMBA_DISABLE_JIT=1
+export SOUTHGRID_SRC
 export ORCA_SCORING_SERVER_URL=
 export ORCA_SCORING_VIDEO_ENABLED=0
-export ORCA_SCORING_BASE_URL=http://127.0.0.1:9010
 
-echo "[$(date '+%H:%M:%S')] start v10 noseek ${EPISODES}x4 (hold-render-hz=0, local-only, :9010)" | tee "$LOG_DIR/runner.log"
-cd "$EVAL_DIR"
+echo "[$(date '+%H:%M:%S')] start v10 pure ${EPISODES}x4" | tee "$LOG_DIR/runner.log"
+cd "$ROOT"
 "$PYTHON" -u eval_g1_omnipicker_lerobot.py \
-  --task_config ../../dataCollection/common/example.yaml \
   --host localhost --port 8010 \
   --exec_horizon 50 \
   --action_repeat 10 \
@@ -31,11 +58,6 @@ cd "$EVAL_DIR"
   --task-id task2_button_press \
   --robot-id g1_omnipicker \
   --local-only \
-  --no-score-seek \
-  --hold-render-hz 0 \
-  --score-hold-s 0 \
-  --min-score-span 22 \
-  --p2-wait hold_at_third \
   --no_preview --no_head_video \
   > "$LOG_DIR/eval.log" 2>&1
 rc=$?

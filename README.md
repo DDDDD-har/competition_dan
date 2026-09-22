@@ -81,7 +81,7 @@ task2/9999.zip
 
 - OrcaLab 中打开并 Play `task2/g1_button.json`；
 - 含 `pi05_g1_scripted_lora_v10` 配置的 openpi 源码；
-- 外部 SouthGrid 源码树，用于提供 `conf`、`controllers`、`dataStorage`、`envs` 等模块；
+- `task2/` 内随附的 SouthGrid 任务运行时模块；
 - `task2/9999.zip` 解压出的 checkpoint。
 
 具体步骤：
@@ -116,8 +116,9 @@ task2/9999.zip
 4. 在 OrcaLab 打开 `task2/g1_button.json` 并点击 **Play**。另开终端设置仿真依赖和 SouthGrid 源码路径：
 
    ```bash
-   export SOUTHGRID_SRC=/path/to/SouthGrid/src
    export PYTHON=/path/to/orcalab/bin/python
+   # 如需使用另一份 SouthGrid 源码，可覆盖本地副本：
+   # export SOUTHGRID_SRC=/path/to/SouthGrid/src
    # 如 orca_gym 不在当前环境中：
    # export ORCA_GYM_ROOT=/path/to/OrcaGym
    ```
@@ -146,5 +147,5 @@ task2/9999.zip
 
 - 仓库不包含 OrcaLab 的商业/内部机器人和场景资产；`g1_button.json` 只保存场景布局及资产引用。
 - 任务 1 的 RTAB-Map 数据库和任务 2 的 checkpoint 必须先从 Hugging Face 下载。
-- 任务 2 的 openpi 配置和 SouthGrid 运行时源码不是本仓库的一部分，必须按 `task2/README.md` 提供路径。
+- 任务 2 所需的 SouthGrid 任务运行时模块已复制到 `task2/`；`orca_gym` 等第三方运行库仍需安装。
 - 评测日志、验证会话和本地缓存不会提交到 GitHub。
