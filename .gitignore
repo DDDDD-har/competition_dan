@@ -6,3 +6,7 @@ task1_opensource/data/world_anchored_rtabmap_20260821T195241+0800/rtabmap.db
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local task2 evaluation output.
+task2/logs/
+task2/.orca_scorer_client/

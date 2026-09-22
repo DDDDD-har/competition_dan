@@ -18,8 +18,7 @@ if [[ -z "${SOUTHGRID_SRC:-}" ]]; then
   for candidate in \
     "$ROOT" \
     "$ROOT/../src" \
-    "$ROOT/../../SouthGrid/src" \
-    "/home/dan/simulation/SouthGrid/src"; do
+    "$ROOT/../../SouthGrid/src"; do
     if [[ -f "$candidate/conf/g1_omnipicker_conf.py" ]]; then
       SOUTHGRID_SRC="$candidate"
       break
@@ -36,8 +35,17 @@ if [[ ! -f "$SOUTHGRID_SRC/conf/g1_omnipicker_conf.py" ]]; then
   exit 1
 fi
 OPENPI_CLIENT_SRC="${OPENPI_CLIENT_SRC:-}"
-if [[ -z "$OPENPI_CLIENT_SRC" && -f "/home/dan/simulation/openpi/packages/openpi-client/src/openpi_client/__init__.py" ]]; then
-  OPENPI_CLIENT_SRC="/home/dan/simulation/openpi/packages/openpi-client/src"
+if [[ -z "$OPENPI_CLIENT_SRC" ]]; then
+  for candidate in \
+    "${OPENPI_ROOT:-}/packages/openpi-client/src" \
+    "$ROOT/../openpi/packages/openpi-client/src" \
+    "$ROOT/../../openpi/packages/openpi-client/src" \
+    "$ROOT/../../simulation/openpi/packages/openpi-client/src"; do
+    if [[ -f "$candidate/openpi_client/__init__.py" ]]; then
+      OPENPI_CLIENT_SRC="$candidate"
+      break
+    fi
+  done
 fi
 if [[ -n "${ORCA_GYM_ROOT:-}" ]]; then
   export PYTHONPATH="${ORCA_GYM_ROOT}:${SOUTHGRID_SRC}${OPENPI_CLIENT_SRC:+:$OPENPI_CLIENT_SRC}${PYTHONPATH:+:$PYTHONPATH}"

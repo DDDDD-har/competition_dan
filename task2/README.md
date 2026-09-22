@@ -74,6 +74,8 @@ uv run scripts/serve_policy.py --port 8010 policy:checkpoint \
 
 ```bash
 export PYTHON=/path/to/env/bin/python
+# openpi checkout 的根目录；脚本会从这里寻找 openpi-client。
+export OPENPI_ROOT=/path/to/openpi
 # 若要使用另一份 SouthGrid 源码，可显式覆盖本地副本：
 # export SOUTHGRID_SRC=/path/to/SouthGrid/src
 # 若当前 Python 环境里没有 orca_gym，再把它的仓库加进来：
@@ -81,7 +83,7 @@ export PYTHON=/path/to/env/bin/python
 bash run_v10_9999_local_noseek.sh
 ```
 
-默认情况下脚本会使用 `task2/` 内的模块，并自动使用本机 openpi checkout 中的 `packages/openpi-client/src`。`orca_gym`、OpenCV、SciPy、h5py、PyAV 等第三方包仍需在 Python 环境中安装；如果 openpi 位于其他位置，可设置 `OPENPI_CLIENT_SRC`，如果 OrcaGym 不在 Python 环境中，可通过 `ORCA_GYM_ROOT` 追加其源码路径。
+默认情况下脚本会使用 `task2/` 内的模块；如果当前 Python 已安装 `openpi_client`，会直接使用已安装包，否则从 `OPENPI_ROOT/packages/openpi-client/src` 或项目相邻目录查找。`orca_gym`、OpenCV、SciPy、h5py、PyAV 等第三方包仍需在 Python 环境中安装；也可以显式设置 `OPENPI_CLIENT_SRC`，如果 OrcaGym 不在 Python 环境中，可通过 `ORCA_GYM_ROOT` 追加其源码路径。
 
 在本目录下执行。默认 1 轮、红绿蓝黄各一次。多轮：
 

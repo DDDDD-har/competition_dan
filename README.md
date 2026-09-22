@@ -54,7 +54,7 @@ task2/9999.zip
 
    ```bash
    source /opt/ros/jazzy/setup.bash
-   export ORCALAB_PYTHON=/home/dan/miniconda3/envs/orcalab/bin/python
+   export ORCALAB_PYTHON=/path/to/orcalab/bin/python
    export PYTHONPATH="$PWD/task1_opensource:$PWD/task1_opensource/src:${PYTHONPATH:-}"
    ```
 
@@ -117,6 +117,7 @@ task2/9999.zip
 
    ```bash
    export PYTHON=/path/to/orcalab/bin/python
+   export OPENPI_ROOT=/path/to/openpi
    # 如 orca_gym 不在当前环境中：
    # export ORCA_GYM_ROOT=/path/to/OrcaGym
    ```

@@ -17,13 +17,12 @@ import numpy as np
 from yaml import Loader, load
 
 def _southgrid_src() -> str:
-    """脚本放在 SouthGrid 树内或 /home/dan/southgrid/task2 时都能找到 src。"""
+    """脚本放在 task2 目录或 SouthGrid 源码树内时都能找到本地模块。"""
     here = os.path.dirname(os.path.realpath(__file__))
     candidates = [
         here,
         os.path.abspath(os.path.join(here, "../../..")),
         os.environ.get("SOUTHGRID_SRC", ""),
-        "/home/dan/simulation/SouthGrid/src",
     ]
     for root in candidates:
         if root and os.path.isfile(os.path.join(root, "conf", "g1_omnipicker_conf.py")):
