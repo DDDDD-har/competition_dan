@@ -1,5 +1,0 @@
-__pycache__/
-*.py[cod]
-.pytest_cache/
-# Keep the packaged common map; ignore generated validation sessions.
-data/validation_*/
