@@ -7,6 +7,17 @@ Southgrid 任务复现代码和配置。仓库分成两个独立入口：
 
 两项任务都依赖 OrcaLab 仿真环境；任务 2 还需要单独运行 openpi 推理服务。
 
+两个任务目录在 Hugging Face 上有加密整包快照 `task1_opensource.7z` 和 `task2.7z`，内容与本仓库一致（见「下载大文件」）。不想逐个 clone 时可以整包下载，用 7z 解压（密码见「下载大文件」），即得到完整的 `task1_opensource/` 与 `task2/` 目录：
+
+```bash
+HF_ASSETS_URL="https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main"
+curl -LO "$HF_ASSETS_URL/task1_opensource.7z" "$HF_ASSETS_URL/task2.7z"
+7z x task1_opensource.7z   # 解压出 task1_opensource/
+7z x task2.7z              # 解压出 task2/
+```
+
+整包里不含两个需要单独获取的大文件：任务 1 的 RTAB-Map 数据库（见「下载大文件」的建图会话压缩包）和任务 2 的 checkpoint `9999.zip`（见下文任务 2 一节）。
+
 ## 复现前提
 
 已验证的基础环境是 Ubuntu 24.04、Python 3.12 和 OrcaLab。具体 ROS/OpenPI 依赖见对应目录的 README。先克隆仓库并进入项目根目录：
@@ -20,11 +31,11 @@ cd southgrid
 
 ## 下载大文件
 
-GitHub 不存储超过单文件限制的训练 checkpoint 和 RTAB-Map 数据库。大文件托管在公开 Hugging Face 数据集：
+GitHub 不存储超过单文件限制的训练 checkpoint 和 RTAB-Map 数据库。大文件和加密压缩包托管在公开 Hugging Face 数据集：
 
 [`dan5433/southgrid-assets`](https://huggingface.co/datasets/dan5433/southgrid-assets)
 
-安装并登录 Hugging Face CLI 后，在项目根目录执行：
+两个任务目录的加密整包 `task1_opensource.7z`、`task2.7z` 也托管在该数据集，内容与本仓库一致，便于不 clone 仓库时整包获取。安装并登录 Hugging Face CLI 后，在项目根目录执行：
 
 ```bash
 hf download dan5433/southgrid-assets \
@@ -35,16 +46,20 @@ hf download dan5433/southgrid-assets \
 这会按仓库路径恢复文件：
 
 ```text
-task1_opensource/data/world_anchored_rtabmap_20260821T195241+0800/rtabmap.db
-task2/9999.zip
+task1_opensource.7z
+task2.7z
+world_anchored_rtabmap_20260821T195241+0800.7z
 ```
+
+其中 `task1_opensource.7z` 和 `task2.7z` 是两个任务目录的加密整包快照；`world_anchored_rtabmap_20260821T195241+0800.7z` 是任务 1 的 RTAB-Map 建图会话（含 343 MB 的 `rtabmap.db`，任务 1 运行必需）。
 
 也可以单独下载：
 
-- [RTAB-Map 数据库](https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main/task1_opensource/data/world_anchored_rtabmap_20260821T195241%2B0800/rtabmap.db)
-- [任务 2 checkpoint `9999.zip`](https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main/task2/9999.zip)
+- [加密整包 `task1_opensource.7z`](https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main/task1_opensource.7z)（任务 1 全部代码与内置地图元数据）
+- [加密整包 `task2.7z`](https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main/task2.7z)（任务 2 全部代码与运行时模块）
+- [RTAB-Map 建图会话](https://huggingface.co/datasets/dan5433/southgrid-assets/resolve/main/world_anchored_rtabmap_20260821T195241%2B0800.7z)（含 `rtabmap.db`）
 
-`9999.zip` 约 9.4 GB，下载完成后不要把 zip 直接传给推理服务；任务 2 需要先解压。若该链接暂时返回 404，说明 Hugging Face 的大文件提交尚未完成，请先在数据集页面确认文件已经出现。
+三个 7z 压缩包的解压密码相同，仅对评委等外部使用者提供，本仓库协作者可向作者索取。任务 1 的建图会话压缩包解压后，把 `world_anchored_rtabmap_20260821T195241+0800/` 放到 `task1_opensource/data/` 下即可被 `run_task1.sh` 使用。`unzip 9999.zip` 所需的任务 2 checkpoint 见下文任务 2 一节。若链接暂时返回 404，说明 Hugging Face 的大文件提交尚未完成，请先在数据集页面确认文件已经出现。
 
 ## 任务 1：导航复现
 
@@ -144,6 +159,6 @@ task2/9999.zip
 ## 复现边界
 
 - 仓库不包含 OrcaLab 的商业/内部机器人和场景资产；`g1_button.json` 只保存场景布局及资产引用。
-- 任务 1 的 RTAB-Map 数据库和任务 2 的 checkpoint 必须先从 Hugging Face 下载。
+- 任务 1 的 RTAB-Map 数据库和任务 2 的 checkpoint 必须先从 Hugging Face 下载；两个任务目录的加密整包 `task1_opensource.7z`、`task2.7z` 同样托管在该数据集。
 - 任务 2 所需的 SouthGrid 任务运行时模块已复制到 `task2/`；`orca_gym` 等第三方运行库仍需安装。
 - 评测日志、验证会话和本地缓存不会提交到 GitHub。
